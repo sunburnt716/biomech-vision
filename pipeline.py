@@ -2,6 +2,8 @@ import cv2
 import mediapipe as mp
 from domain.body_state import BodyState
 from core.geometry import is_valid_human_pose
+from core.signal import WristValleyDetector
+
 
 
 def main():
@@ -24,7 +26,10 @@ def main():
         min_tracking_confidence = 0.7,
     )
 
-    print("Pipeline Running... Press 'q' to Quit")
+    #Developed time-series heuristic
+    valley_detector = WristValleyDetector(history_size = 5)
+
+    print("Pipeline Running... Waiting for impact. Press 'q' to Quit")
 
     #--Ingestion Loop--
     while cap.isOpened():
@@ -32,7 +37,8 @@ def main():
         if not ret:
             print("End of video stream")
             break
-
+        
+        current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
         image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = pose.process(image_rgb)
 
@@ -43,6 +49,28 @@ def main():
 
             if not is_valid_human_pose(body):
                 continue
+            
+            #NOTE: Currently we are tracking the right wrist,
+            #if batsmen is left handed, switch to left-handed
+            #Eventually, this will be automated
+            is_impact = valley_detector.process_frame(body.right_wrist.y)
+            
+            if is_impact:
+                print(f"\n Impact Detected at Frame {current_frame}")
+
+                #Extract biomechanics at moment of impact
+                l_elbow = body.left_elbow_angle
+                l_knee = body.left_knee_angle
+                print(f"Metrics -> Lead Elbow: {l_elbow:.1f} degrees, Lead Kneww: {l_knee:.1f} degrees")
+
+                cv2.putText(frame, "Impact Detected", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4)
+
+                h, w, _ = frame.shape
+                wrist_px = (int(body.right_wrist.x * w), int(body.right_wrist.y * h))
+                cv2.circle(frame, wrist_px, 5, (0, 0, 255), -1)
+
+                mp_drawing.draw_landmarks(frame, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
+
 
 
             cv2.rectangle(frame, (10, 10), (350, 150), (0, 0, 0), -1)
@@ -55,7 +83,7 @@ def main():
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 165, 0), 2)
 
 
-            print(f"Right Wrist Y-Coord: {body.right_wrist.y: .3f}")
+            
 
             mp_drawing.draw_landmarks(
                 frame,
